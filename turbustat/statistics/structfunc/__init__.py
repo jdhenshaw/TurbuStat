@@ -1,1 +1,1 @@
-# from .structfunc import StructFunc1d, StructFunc2d
+from .structfunc import StructFunc2d

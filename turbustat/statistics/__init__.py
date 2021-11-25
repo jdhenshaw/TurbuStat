@@ -11,6 +11,7 @@ from .tsallis import *
 from .vca_vcs import *
 from .wavelets import *
 from .pdf import *
+from .structfunc import *
 # from .mahalanobis import *
 from .statistics_list import statistics_list, twoD_statistics_list
 from .lm_seg import Lm_Seg
