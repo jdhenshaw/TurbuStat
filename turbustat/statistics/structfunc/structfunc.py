@@ -11,12 +11,11 @@ from warnings import warn
 from astropy.utils.console import ProgressBar
 
 from ..base_statistic import BaseStatisticMixIn
-from ...io import common_types, twod_types, input_data
+from ...io import common_types, twod_types, input_data, find_beam_properties
 from ..stats_utils import common_scale, padwithzeros
 from ..fitting_utils import check_fit_limits, residual_bootstrap
 from ..stats_warnings import TurbuStatMetricWarning
 from ..lm_seg import Lm_Seg
-from ..convolve_wrapper import convolution_wrapper
 
 class StructFunc2d(BaseStatisticMixIn):
     '''
@@ -43,9 +42,11 @@ class StructFunc2d(BaseStatisticMixIn):
 
         if lags is None:
             min_size = 3.0
+            # only go to self.data.shape/4 (used to define radius over which we
+            # will use to compute structure function)
             self.lags = \
                 np.logspace(np.log10(min_size),
-                            np.log10(min(self.data.shape) / 2.), nlags) * u.pix
+                            np.log10(min(self.data.shape) / 4.), nlags) * u.pix
         else:
             # Check if the given lags are a Quantity
             # Default to pixel scales if it isn't
@@ -54,8 +55,9 @@ class StructFunc2d(BaseStatisticMixIn):
             else:
                 self.lags = self._to_pixel(lags)
 
-        self.order = order
         self.load_beam(beam=beam)
+
+        self.order = order
 
     @property
     def lags(self):
@@ -102,6 +104,53 @@ class StructFunc2d(BaseStatisticMixIn):
 
         self._weights = arr
 
+    def points_on_circle(self,lag,angle,point_separation):
+        '''
+        Computes the cartesian x,y location of a position on a circle given a
+        certain angle
+        '''
+        angle=np.radians(angle)
+        #center of circle, angle in degree and radius of circle
+        reference=[np.shape(self.data)[0]//2, np.shape(self.data)[1]//2]
+        #x = offsetX + radius * Cosine(radians)
+        x = reference[1] + (lag * np.cos(angle))
+        #y = offsetY + radius * Sine(radians)
+        y = reference[0] + (lag * np.sin(angle))
+
+        x = np.around(x, decimals=2)
+        y = np.around(y, decimals=2)
+        # return the cartesian coords of the shift locations
+        return np.array([y,x])
+
+    def compute_shift_locations(self,lag):
+        '''
+        Compute the shift locations for the image shift-and-difference approach.
+        Computes locations of points on a circle of radius == lag, centred on the
+        centre of the image. The point locations are separated by the beam size
+        by default and if provided.
+        '''
+
+        if hasattr(self, "_beam"):
+            # define the point separation using the beam size
+            major=self._to_pixel(self._beam.major)
+            minor=self._to_pixel(self._beam.minor)
+            beamsize=np.sqrt(major*minor)
+            point_separation=beamsize
+        else:
+            # else set to 1.0 pixel - probably very slow
+            point_separation=1.0*u.pix
+
+        # number of shift locations - perimeter/point_separation
+        npts=np.around((2.*np.pi*lag)/point_separation.value, decimals=0)
+        # angle separation
+        angle_sep=360./npts
+        # define angles for shift locations
+        angles=np.arange(0.,360.,angle_sep)
+        # compute the shift locations
+        shift_locations=np.asarray([self.points_on_circle(lag, theta, point_separation) for theta in angles])
+
+        return shift_locations
+
     def compute_structfunc2d(self, boundary='wrap',
                              show_progress=True):
         '''
@@ -115,7 +164,8 @@ class StructFunc2d(BaseStatisticMixIn):
             bar = ProgressBar(len(self.lags))
 
         for i, lag in enumerate(self.lags.value):
-            print(i, lag)
+            self._shift_locations=self.compute_shift_locations(lag)
+
 
         if show_progress:
             bar.update(i + 1)
@@ -481,10 +531,10 @@ class StructFunc2d(BaseStatisticMixIn):
 
         self.compute_structfunc2d(boundary=boundary,
                                   show_progress=show_progress)
-        self.fit_plaw(xlow=xlow, xhigh=xhigh, brk=brk, verbose=verbose,
-                      **fit_kwargs)
+        # self.fit_plaw(xlow=xlow, xhigh=xhigh, brk=brk, verbose=verbose,
+        #               **fit_kwargs)
 
-        if verbose:
-            self.plot_fit(save_name=save_name, xunit=xunit)
+        # if verbose:
+        #     self.plot_fit(save_name=save_name, xunit=xunit)
 
         return self
